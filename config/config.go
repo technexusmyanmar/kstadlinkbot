@@ -1,55 +1,65 @@
 package config
 
 import (
-	"fmt"
+	"errors"
+	"io"
+	"net"
+	"net/http"
 	"os"
+	"path/filepath"
+	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/joho/godotenv"
+	"github.com/kelseyhightower/envconfig"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
 
+var ValueOf = &config{}
+
+type allowedUsers []int64
+
+func (au *allowedUsers) Decode(value string) error {
+	if value == "" {
+		return nil
+	}
+	ids := strings.Split(string(value), ",")
+	for _, id := range ids {
+		idInt, err := strconv.ParseInt(id, 10, 64)
+		if err != nil {
+			return err
+		}
+		*au = append(*au, idInt)
+	}
+	return nil
+}
+
 type config struct {
-	APIID             int    `envconfig:"API_ID" required:"true"`
-	APIHash           string `envconfig:"API_HASH" required:"true"`
-	BotToken          string `envconfig:"BOT_TOKEN" required:"true"`
-	LogChannelID      int64  `envconfig:"LOG_CHANNEL" required:"true"`
-	BackupChannelID   int64  `envconfig:"BACKUP_CHANNEL"` // Secret အတွက်
-	HashLength        int    `envconfig:"HASH_LENGTH" default:"6"`
-	StreamConcurrency int    `envconfig:"STREAM_CONCURRENCY" default:"4"`
-	StreamBufferCount int    `envconfig:"STREAM_BUFFER_COUNT" default:"8"`
-	StreamTimeoutSec  int    `envconfig:"STREAM_TIMEOUT_SEC" default:"30"`
-	StreamMaxRetries  int    `envconfig:"STREAM_MAX_RETRIES" default:"3"`
+	ApiID          int32        `envconfig:"API_ID" required:"true"`
+	ApiHash        string       `envconfig:"API_HASH" required:"true"`
+	BotToken       string       `envconfig:"BOT_TOKEN" required:"true"`
+	LogChannelID   int64        `envconfig:"LOG_CHANNEL" required:"true"`
+	Dev            bool         `envconfig:"DEV" default:"false"`
+	Port           int          `envconfig:"PORT" default:"8080"`
+	Host           string       `envconfig:"HOST" default:""`
+	HashLength     int          `envconfig:"HASH_LENGTH" default:"6"`
+	UseSessionFile bool         `envconfig:"USE_SESSION_FILE" default:"true"`
+	UserSession    string       `envconfig:"USER_SESSION"`
+	UsePublicIP    bool         `envconfig:"USE_PUBLIC_IP" default:"false"`
+	AllowedUsers   allowedUsers `envconfig:"ALLOWED_USERS"`
+	MultiTokens    []string
+
+	// stream specific config
+	StreamConcurrency int `envconfig:"STREAM_CONCURRENCY" default:"4"`
+	StreamBufferCount int `envconfig:"STREAM_BUFFER_COUNT" default:"8"`
+	StreamTimeoutSec  int `envconfig:"STREAM_TIMEOUT_SEC" default:"30"`
+	StreamMaxRetries  int `envconfig:"STREAM_MAX_RETRIES" default:"3"`
 }
 
-var ValueOf config
-
-func Load(log *zap.Logger, cmd *cobra.Command) {
-	log = log.Named("Config")
-	_ = godotenv.Load("fsb.env")
-
-	ValueOf.setupEnvVars(log, cmd)
-
-	// --- Secret ကနေ Backup ID ကို တိုက်ရိုက်ဖတ်ပြီး ID အမှန်ပြင်ခြင်း ---
-	backupStr := os.Getenv("BACKUP_CHANNEL")
-	if backupStr != "" {
-		id, _ := strconv.ParseInt(strings.TrimPrefix(backupStr, "-100"), 10, 64)
-		ValueOf.BackupChannelID = id
-		log.Info(fmt.Sprintf("Backup Channel ID loaded: %d", ValueOf.BackupChannelID))
-	}
-
-	// Log Channel ID ကိုလည်း ID အမှန်ပြင်ခြင်း
-	logIDStr := os.Getenv("LOG_CHANNEL")
-	if logIDStr != "" {
-		id, _ := strconv.ParseInt(strings.TrimPrefix(logIDStr, "-100"), 10, 64)
-		ValueOf.LogChannelID = id
-	}
-
-	log.Info("Loaded config")
-}
-
+var botTokenRegex = regexp.MustCompile(`MULTI\_TOKEN\d+=(.*)`)
 
 func (c *config) loadFromEnvFile(log *zap.Logger) {
 	envPath := filepath.Clean("fsb.env")
@@ -72,7 +82,6 @@ func SetFlagsFromConfig(cmd *cobra.Command) {
 	cmd.Flags().String("api-hash", ValueOf.ApiHash, "Telegram API Hash")
 	cmd.Flags().String("bot-token", ValueOf.BotToken, "Telegram Bot Token")
 	cmd.Flags().Int64("log-channel", ValueOf.LogChannelID, "Telegram Log Channel ID")
-	cmd.Flags().Int64("backup-channel", ValueOf.BackupChannelID, "Telegram Backup Channel ID")
 	cmd.Flags().Bool("dev", ValueOf.Dev, "Enable development mode")
 	cmd.Flags().IntP("port", "p", ValueOf.Port, "Server port")
 	cmd.Flags().String("host", ValueOf.Host, "Server host that will be included in links")
@@ -104,10 +113,6 @@ func (c *config) loadConfigFromArgs(log *zap.Logger, cmd *cobra.Command) {
 	if logChannelID != "" {
 		os.Setenv("LOG_CHANNEL", logChannelID)
 	}
-	backupChannelID, _ := cmd.Flags().GetString("backup-channel")
-    if backupChannelID != "" {
-        os.Setenv("BACKUP_CHANNEL", backupChannelID)
-    }
 	dev, _ := cmd.Flags().GetBool("dev")
 	if dev {
 		os.Setenv("DEV", strconv.FormatBool(dev))
@@ -198,17 +203,6 @@ func Load(log *zap.Logger, cmd *cobra.Command) {
 	defer log.Info("Loaded config")
 	ValueOf.setupEnvVars(log, cmd)
 	ValueOf.LogChannelID = int64(stripInt(log, int(ValueOf.LogChannelID)))
-	
-
-	
-	if ValueOf.BackupChannelID != 0 {
-		ValueOf.BackupChannelID = int64(stripInt(log, int(ValueOf.BackupChannelID)))
-	}
-
-	if ValueOf.HashLength == 0 {
-		log.Sugar().Info("HASH_LENGTH can't be 0, defaulting to 6")
-		ValueOf.HashLength = 6
-	}
 	if ValueOf.HashLength == 0 {
 		log.Sugar().Info("HASH_LENGTH can't be 0, defaulting to 6")
 		ValueOf.HashLength = 6
