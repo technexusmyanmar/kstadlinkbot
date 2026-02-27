@@ -177,9 +177,8 @@ func GetLogChannelPeer(ctx context.Context, api *tg.Client, peerStorage *storage
 }
 
 func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int) (*tg.Updates, error) {
-	// (၁) Owner စစ်ခြင်း
-	myID := int64(34512911)
-	if fromChatId != myID {
+	// (၁) Owner စစ်ခြင်း (သင့် ID မဟုတ်ရင် ဘာမှမလုပ်ပါ)
+	if fromChatId != 34512911 {
 		return nil, fmt.Errorf("unauthorized user")
 	}
 
@@ -188,12 +187,13 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 		return nil, fmt.Errorf("fromChatId: %d is not a valid peer", fromChatId)
 	}
 
-	// (၂) Main Storage ကို အရင်ပို့ခြင်း
+	// (၂) ပထမ Main Storage (LOG_CHANNEL) ကို ပို့ခြင်း
 	toPeer, err := GetLogChannelPeer(ctx, ctx.Raw, ctx.PeerStorage)
 	if err != nil {
 		return nil, err
 	}
-	update, err := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
+	
+	mainUpdate, err := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
 		DropAuthor: true,
 		RandomID:   []int64{rand.Int63()},
 		FromPeer:   fromPeer,
@@ -201,26 +201,35 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 		ToPeer:     &tg.InputPeerChannel{ChannelID: toPeer.ChannelID, AccessHash: toPeer.AccessHash},
 	})
 
-	// (၃) Backup Storage ကို ပို့ခြင်း (ပိုမိုသေချာသောနည်းလမ်း)
-	backupID := int64(-1003540240008) // သင့် Backup ID
-	
-	// Backup Peer ကို အတင်းရှာခိုင်းပါမည်
-	backupInputChannel := &tg.InputChannel{ChannelID: backupID}
-	backupChannels, err := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{backupInputChannel})
-	
-	if err == nil && len(backupChannels.GetChats()) > 0 {
-		bPeer := backupChannels.GetChats()[0].(*tg.Channel).AsInput()
-		ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-			DropAuthor: true,
-			RandomID:   []int64{rand.Int63()},
-			FromPeer:   fromPeer,
-			ID:         []int{messageID},
-			ToPeer:     bPeer,
-		})
+	// (၃) ဒုတိယ Backup Storage (Hugging Face က BACKUP_CHANNEL ကို သုံးခြင်း)
+	backupID := config.ValueOf.BackupChannelID
+	if backupID != 0 {
+		// PeerStorage ထဲမှာ အချက်အလက်ရှိမရှိ စစ်သည်
+		backupPeer := ctx.PeerStorage.GetInputPeerById(backupID)
+		
+		// သိမ်းထားတာမရှိရင် Telegram API ဆီကနေ Access Hash ကို အတင်းလှမ်းတောင်းသည်
+		if backupPeer.Zero() {
+			inputChannel := &tg.InputChannel{ChannelID: backupID}
+			channels, _ := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{inputChannel})
+			if len(channels.GetChats()) > 0 {
+				backupPeer = channels.GetChats()[0].(*tg.Channel).AsInput()
+			}
+		}
+
+		// Bot က Backup Channel ထဲမှာ Admin ဖြစ်နေရင် ဖိုင်ပို့ပေးမည်
+		if !backupPeer.Zero() {
+			ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
+				DropAuthor: true,
+				RandomID:   []int64{rand.Int63()},
+				FromPeer:   fromPeer,
+				ID:         []int{messageID},
+				ToPeer:     backupPeer,
+			})
+		}
 	}
 
 	if err != nil {
 		return nil, err
 	}
-	return update.(*tg.Updates), nil
+	return mainUpdate.(*tg.Updates), nil
 }
