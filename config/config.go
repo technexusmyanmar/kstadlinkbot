@@ -42,7 +42,7 @@ type config struct {
 	ApiHash        string       `envconfig:"API_HASH" required:"true"`
 	BotToken       string       `envconfig:"BOT_TOKEN" required:"true"`
 	LogChannelID   int64        `envconfig:"LOG_CHANNEL" required:"true"`
-	BackupChannelID int64        `envconfig:"BACKUP_CHANNEL"`
+	BackupChannelID int64        `envconfig:"BACKUP_CHANNEL" required:"true"`
 	Dev            bool         `envconfig:"DEV" default:"false"`
 	Port           int          `envconfig:"PORT" default:"8080"`
 	Host           string       `envconfig:"HOST" default:""`
@@ -208,7 +208,14 @@ func Load(log *zap.Logger, cmd *cobra.Command) {
 	log = log.Named("Config")
 	defer log.Info("Loaded config")
 	ValueOf.setupEnvVars(log, cmd)
+	// --- ဒီအပိုင်းမှာ အခုလို ပြောင်းလိုက်ပါ ---
 	ValueOf.LogChannelID = int64(stripInt(log, int(ValueOf.LogChannelID)))
+
+	if ValueOf.BackupChannelID != 0 {
+		ValueOf.BackupChannelID = int64(stripInt(log, int(ValueOf.BackupChannelID)))
+	}
+	// ------------------------------------
+
 	if ValueOf.HashLength == 0 {
 		log.Sugar().Info("HASH_LENGTH can't be 0, defaulting to 6")
 		ValueOf.HashLength = 6
