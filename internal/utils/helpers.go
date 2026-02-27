@@ -17,7 +17,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// https://stackoverflow.com/a/70802740/15807350
+// ... (Contains နဲ့ IsClientDisconnectError function များ မူရင်းအတိုင်း ထားပါ) ...
+
 func Contains[T comparable](s []T, e T) bool {
 	for _, v := range s {
 		if v == e {
@@ -27,8 +28,6 @@ func Contains[T comparable](s []T, e T) bool {
 	return false
 }
 
-// IsClientDisconnectError checks if the error is due to client disconnecting
-// e.g. user seeking in video, stopping playback, or network issues on client side
 func IsClientDisconnectError(err error) bool {
 	if err == nil {
 		return false
@@ -39,9 +38,6 @@ func IsClientDisconnectError(err error) bool {
 		strings.Contains(errStr, "broken pipe") ||
 		strings.Contains(errStr, "forcibly closed")
 }
-
-// telegram helper functions
-// TODO: move these to a separate package if they grow too large
 
 func GetTGMessage(ctx context.Context, client *gotgproto.Client, messageID int) (*tg.Message, error) {
 	inputMessageID := tg.InputMessageClass(&tg.InputMessageID{ID: messageID})
@@ -105,7 +101,7 @@ func FileFromMedia(media tg.MessageMediaClass) (*types.File, error) {
 		location.ThumbSize = size.GetType()
 		return &types.File{
 			Location: location,
-			FileSize: 0, // caller should judge if this is a photo or not
+			FileSize: 0,
 			FileName: fmt.Sprintf("photo_%d.jpg", photo.GetID()),
 			MimeType: "image/jpeg",
 			ID:       photo.GetID(),
@@ -120,10 +116,8 @@ func FileFromMessage(ctx context.Context, client *gotgproto.Client, messageID in
 	var cachedMedia types.File
 	err := cache.GetCache().Get(key, &cachedMedia)
 	if err == nil {
-		log.Debug("Using cached media message properties", zap.Int("messageID", messageID), zap.Int64("clientID", client.Self.ID))
 		return &cachedMedia, nil
 	}
-	log.Debug("Fetching file properties from message ID", zap.Int("messageID", messageID), zap.Int64("clientID", client.Self.ID))
 	message, err := GetTGMessage(ctx, client, messageID)
 	if err != nil {
 		return nil, err
@@ -132,98 +126,80 @@ func FileFromMessage(ctx context.Context, client *gotgproto.Client, messageID in
 	if err != nil {
 		return nil, err
 	}
-	err = cache.GetCache().Set(
-		key,
-		file,
-		3600,
-	)
+	err = cache.GetCache().Set(key, file, 3600)
 	if err != nil {
 		return nil, err
 	}
 	return file, nil
 }
 
+// မူရင်း GetLogChannelPeer
 func GetLogChannelPeer(ctx context.Context, api *tg.Client, peerStorage *storage.PeerStorage) (*tg.InputChannel, error) {
 	cachedInputPeer := peerStorage.GetInputPeerById(config.ValueOf.LogChannelID)
-
 	switch peer := cachedInputPeer.(type) {
-	case *tg.InputPeerEmpty:
-		break
 	case *tg.InputPeerChannel:
-		return &tg.InputChannel{
-			ChannelID:  peer.ChannelID,
-			AccessHash: peer.AccessHash,
-		}, nil
-	default:
-		return nil, errors.New("unexpected type of input peer")
+		return &tg.InputChannel{ChannelID: peer.ChannelID, AccessHash: peer.AccessHash}, nil
 	}
-	inputChannel := &tg.InputChannel{
-		ChannelID: config.ValueOf.LogChannelID,
-	}
+	inputChannel := &tg.InputChannel{ChannelID: config.ValueOf.LogChannelID}
 	channels, err := api.ChannelsGetChannels(ctx, []tg.InputChannelClass{inputChannel})
 	if err != nil {
 		return nil, err
 	}
-	if len(channels.GetChats()) == 0 {
-		return nil, errors.New("no channels found")
+	channel := channels.GetChats()[0].(*tg.Channel)
+	peerStorage.AddPeer(channel.GetID(), channel.AccessHash, storage.TypeChannel, "")
+	return channel.AsInput(), nil
+}
+
+// Backup အတွက် အသစ်ထည့်ထားသော Function
+func GetBackupChannelPeer(ctx context.Context, api *tg.Client, peerStorage *storage.PeerStorage) (*tg.InputChannel, error) {
+	cachedInputPeer := peerStorage.GetInputPeerById(config.ValueOf.BackupChannelID)
+	switch peer := cachedInputPeer.(type) {
+	case *tg.InputPeerChannel:
+		return &tg.InputChannel{ChannelID: peer.ChannelID, AccessHash: peer.AccessHash}, nil
 	}
-	channel, ok := channels.GetChats()[0].(*tg.Channel)
-	if !ok {
-		return nil, errors.New("type assertion to *tg.Channel failed")
+	inputChannel := &tg.InputChannel{ChannelID: config.ValueOf.BackupChannelID}
+	channels, err := api.ChannelsGetChannels(ctx, []tg.InputChannelClass{inputChannel})
+	if err != nil {
+		return nil, err
 	}
-	// Bruh, I literally have to call library internal functions at this point
+	channel := channels.GetChats()[0].(*tg.Channel)
 	peerStorage.AddPeer(channel.GetID(), channel.AccessHash, storage.TypeChannel, "")
 	return channel.AsInput(), nil
 }
 
 func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int) (*tg.Updates, error) {
-	// (၁) Owner စစ်ခြင်း (သင့် ID မဟုတ်ရင် ဘာမှမလုပ်ပါ)
-	if fromChatId != 34512911 {
-		return nil, fmt.Errorf("unauthorized")
-	}
-
 	fromPeer := ctx.PeerStorage.GetInputPeerById(fromChatId)
-
-	// (၂) Main Storage (Log Channel) ကို ပို့ခြင်း
-	// config.go ထဲမှာ stripInt လုပ်ထားပြီးသားမို့လို့ API ကနေ Access Hash လှမ်းတောင်းပါမယ်
-	mainInp := &tg.InputChannel{ChannelID: toChatId}
-	mRes, mErr := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{mainInp})
-	var mainUpdate *tg.Updates
-
-	if mErr == nil && len(mRes.GetChats()) > 0 {
-		mPeer := mRes.GetChats()[0].(*tg.Channel).AsInput()
-		res, _ := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-			DropAuthor: true,
-			RandomID:   []int64{rand.Int63()},
-			FromPeer:   fromPeer,
-			ID:         []int{messageID},
-			ToPeer:     mPeer,
-		})
-		if res != nil {
-			mainUpdate = res.(*tg.Updates)
-		}
+	if fromPeer.Zero() {
+		return nil, fmt.Errorf("fromChatId: %d is not a valid peer", fromChatId)
 	}
 
-	// (၃) Backup Storage ကိုပါ ထပ်ပို့ပေးခြင်း
-	backupID := config.ValueOf.BackupChannelID
-	if backupID != 0 {
-		backupInp := &tg.InputChannel{ChannelID: backupID}
-		bRes, bErr := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{backupInp})
-		
-		if bErr == nil && len(bRes.GetChats()) > 0 {
-			bPeer := bRes.GetChats()[0].(*tg.Channel).AsInput()
+	// (၁) Main Storage (Log Channel) ကို ပို့ခြင်း
+	toPeer, err := GetLogChannelPeer(ctx, ctx.Raw, ctx.PeerStorage)
+	if err != nil {
+		return nil, err
+	}
+	update, err := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
+		RandomID: []int64{rand.Int63()},
+		FromPeer: fromPeer,
+		ID:       []int{messageID},
+		ToPeer:   &tg.InputPeerChannel{ChannelID: toPeer.ChannelID, AccessHash: toPeer.AccessHash},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// (၂) Backup Storage ရှိခဲ့ရင် ပို့ခြင်း
+	if config.ValueOf.BackupChannelID != 0 {
+		backupPeer, bErr := GetBackupChannelPeer(ctx, ctx.Raw, ctx.PeerStorage)
+		if bErr == nil {
 			ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-				DropAuthor: true,
-				RandomID:   []int64{rand.Int63()},
-				FromPeer:   fromPeer,
-				ID:         []int{messageID},
-				ToPeer:     bPeer,
+				RandomID: []int64{rand.Int63()},
+				FromPeer: fromPeer,
+				ID:       []int{messageID},
+				ToPeer:   &tg.InputPeerChannel{ChannelID: backupPeer.ChannelID, AccessHash: backupPeer.AccessHash},
 			})
 		}
 	}
 
-	if mainUpdate == nil {
-		return nil, fmt.Errorf("failed to forward to main storage")
-	}
-	return mainUpdate, nil
+	return update.(*tg.Updates), nil
 }
