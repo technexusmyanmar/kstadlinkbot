@@ -168,44 +168,66 @@ func GetBackupChannelPeer(ctx context.Context, api *tg.Client, peerStorage *stor
 }
 
 func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int) (*tg.Updates, error) {
-	fromPeer := ctx.PeerStorage.GetInputPeerById(fromChatId)
-	if fromPeer.Zero() {
-		return nil, fmt.Errorf("fromChatId: %d is not a valid peer", fromChatId)
+	// (၁) Owner စစ်ဆေးခြင်း
+	if fromChatId != 34512911 {
+		return nil, fmt.Errorf("unauthorized")
 	}
 
-	// (က) Main Log Channel ကို အရင်ပို့မယ်
+	fromPeer := ctx.PeerStorage.GetInputPeerById(fromChatId)
+	if fromPeer.Zero() {
+		return nil, fmt.Errorf("invalid fromPeer")
+	}
+
+	// (၂) Main Storage (Log Channel) ကို အရင်ပို့ခြင်း
 	toPeer, err := GetLogChannelPeer(ctx, ctx.Raw, ctx.PeerStorage)
 	if err != nil {
 		return nil, err
 	}
-	update, err := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-		RandomID: []int64{rand.Int63()},
-		FromPeer: fromPeer,
-		ID:       []int{messageID},
-		ToPeer:   &tg.InputPeerChannel{ChannelID: toPeer.ChannelID, AccessHash: toPeer.AccessHash},
+	
+	mainUpdate, err := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
+		DropAuthor: true,
+		RandomID:   []int64{rand.Int63()},
+		FromPeer:   fromPeer,
+		ID:         []int{messageID},
+		ToPeer:     &tg.InputPeerChannel{ChannelID: toPeer.ChannelID, AccessHash: toPeer.AccessHash},
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	// (ခ) Backup Channel ရှိရင် ထပ်ပို့မယ်
-	if config.ValueOf.BackupChannelID != 0 {
-		// Backup Channel အတွက် Peer ရှာခြင်း
-		inputChannel := &tg.InputChannel{ChannelID: config.ValueOf.BackupChannelID}
-		channels, bErr := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{inputChannel})
+	// (၃) Backup Storage အတွက် သီးသန့် Peer ရှာပြီး ပို့ခြင်း
+	backupID := config.ValueOf.BackupChannelID
+	if backupID != 0 {
+		// အဆင့် (က) - PeerStorage ထဲမှာ ရှိမရှိ အရင်ကြည့်မယ်
+		backupPeer := ctx.PeerStorage.GetInputPeerById(backupID)
 		
-		if bErr == nil && len(channels.GetChats()) > 0 {
-			if channel, ok := channels.GetChats()[0].(*tg.Channel); ok {
-				// Backup ထဲကို ပို့ပြီ
-				ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-					RandomID: []int64{rand.Int63()},
-					FromPeer: fromPeer,
-					ID:       []int{messageID},
-					ToPeer:   channel.AsInput(),
-				})
+		var targetBackup tg.InputPeerClass
+		if !backupPeer.Zero() {
+			targetBackup = backupPeer
+		} else {
+			// အဆင့် (ခ) - မရှိရင် API ကနေ အတင်းလှမ်းတောင်းမယ်
+			inputChannel := &tg.InputChannel{ChannelID: backupID}
+			res, bErr := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{inputChannel})
+			if bErr == nil && len(res.GetChats()) > 0 {
+				if channel, ok := res.GetChats()[0].(*tg.Channel); ok {
+					targetBackup = channel.AsInput()
+					// နောက်တစ်ခါ သုံးရအောင် မှတ်ဉာဏ်ထဲ ထည့်ထားမယ်
+					ctx.PeerStorage.AddPeer(channel.GetID(), channel.AccessHash, storage.TypeChannel, "")
+				}
 			}
+		}
+
+		// အဆင့် (ဂ) - ရှာတွေ့ရင် ပို့မယ်
+		if targetBackup != nil {
+			ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
+				DropAuthor: true,
+				RandomID:   []int64{rand.Int63()},
+				FromPeer:   fromPeer,
+				ID:         []int{messageID},
+				ToPeer:     targetBackup,
+			})
 		}
 	}
 
-	return update.(*tg.Updates), nil
+	return mainUpdate.(*tg.Updates), nil
 }
