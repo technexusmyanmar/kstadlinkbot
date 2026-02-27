@@ -61,7 +61,7 @@ func sendLink(ctx *ext.Context, u *ext.Update) error {
 		ctx.Reply(u, ext.ReplyTextString("Sorry, this message type is unsupported."), nil)
 		return dispatcher.EndGroups
 	}
-	// (၁) Log Channel ဆီ ပို့ပြီး Update ယူမယ်
+	// (၁) Log Channel ဆီ ပို့ခြင်း (Link ထုတ်ရန်အတွက်)
 	update, err := utils.ForwardMessages(ctx, chatId, config.ValueOf.LogChannelID, u.EffectiveMessage.ID)
 	if err != nil {
 		utils.Logger.Sugar().Error(err)
@@ -69,20 +69,20 @@ func sendLink(ctx *ext.Context, u *ext.Update) error {
 		return dispatcher.EndGroups
 	}
 
-	// (၂) Backup Channel ဆီ ပို့မယ် (Hugging Face Secret ထဲက BACKUP_CHANNEL ကို သုံးမယ်)
+	// (၂) Backup Channel ဆီ ပို့ခြင်း (Link နဲ့ မရောအောင် သီးသန့် ပို့မယ်)
 	backupEnv := os.Getenv("BACKUP_CHANNEL")
 	if backupEnv != "" {
+		// ID ကို သန့်စင်မယ်
 		cleanBID, pErr := strconv.ParseInt(strings.TrimPrefix(backupEnv, "-100"), 10, 64)
 		if pErr == nil {
-			// Link ထုတ်တာ မနှောင့်နှေးအောင် go routine နဲ့ ပို့မယ်
 			go func(bID int64) {
-				// API ကို တိုက်ရိုက် ခိုင်းတာဖြစ်လို့ utils logic နဲ့ မရောတော့ပါဘူး
+				// အရေးကြီးဆုံးအချက်- ToPeer ကို Backup ID ပေးရပါမယ်
 				ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
 					DropAuthor: true,
 					RandomID:   []int64{rand.Int63()},
 					FromPeer:   u.EffectiveMessage.GetInputPeer(),
 					ID:         []int{u.EffectiveMessage.ID},
-					ToPeer:     &tg.InputPeerChannel{ChannelID: bID},
+					ToPeer:     &tg.InputPeerChannel{ChannelID: bID}, // ဒီနေရာမှာ bID ဖြစ်ရပါမယ်
 				})
 			}(cleanBID)
 		}
