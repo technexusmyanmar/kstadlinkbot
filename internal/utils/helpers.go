@@ -172,27 +172,16 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 	if fromPeer.Zero() {
 		return nil, fmt.Errorf("fromChatId: %d is not a valid peer", fromChatId)
 	}
-
-	// မူရင်းက LogChannelID ကိုပဲ သုံးထားတာ၊ အခု ကျွန်တော်တို့က toChatId (ပို့ချင်တဲ့နေရာ) ကို သုံးမယ်
-	toPeer := ctx.PeerStorage.GetInputPeerById(toChatId)
-	
-	// တကယ်လို့ Peer မရှိသေးရင် (Bot မသိသေးရင်) ရှာခိုင်းမယ်
-	if toPeer.Zero() {
-		inputChannel := &tg.InputChannel{ChannelID: toChatId}
-		res, err := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{inputChannel})
-		if err == nil && len(res.GetChats()) > 0 {
-			if channel, ok := res.GetChats()[0].(*tg.Channel); ok {
-				toPeer = channel.AsInput()
-			}
-		}
+	toPeer, err := GetLogChannelPeer(ctx, ctx.Raw, ctx.PeerStorage)
+	if err != nil {
+		return nil, err
 	}
-
 	update, err := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-		DropAuthor: true,
+		DropAuthor: true, // ဤစာကြောင်းကို ထပ်တိုးပြီး Forward From ဖျောက်ထားပါသည်
 		RandomID:   []int64{rand.Int63()},
 		FromPeer:   fromPeer,
 		ID:         []int{messageID},
-		ToPeer:     toPeer,
+		ToPeer:     &tg.InputPeerChannel{ChannelID: toPeer.ChannelID, AccessHash: toPeer.AccessHash},
 	})
 	if err != nil {
 		return nil, err
