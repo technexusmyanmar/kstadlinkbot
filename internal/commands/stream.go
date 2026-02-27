@@ -68,65 +68,30 @@ func sendLink(ctx *ext.Context, u *ext.Update) error {
 		return dispatcher.EndGroups
 	}
 
-	// --- ဒီနေရာကနေ စထည့်ပါ ---
-	if config.ValueOf.BackupChannelID != 0 {
-		go func() {
-			_, bErr := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-				DropAuthor: true,
-				RandomID:   []int64{rand.Int63()},
-				FromPeer:   u.EffectiveMessage.GetInputPeer(),
-				ID:         []int{u.EffectiveMessage.ID},
-				ToPeer:     &tg.InputPeerChannel{ChannelID: config.ValueOf.BackupChannelID},
-			})
-			if bErr != nil {
-				utils.Logger.Sugar().Errorf("Backup Error: %v", bErr)
-			}
-		}()
+	// --- ဒီအပိုင်းကို အသစ်ပြန်ထည့်ပါ (ပိုသေချာအောင်) ---
+	backupEnv := os.Getenv("BACKUP_CHANNEL")
+	if backupEnv != "" {
+		// ID ထဲက -100 ကို ဖယ်ပြီး နံပါတ်အဖြစ် ပြောင်းမယ်
+		cleanID := strings.TrimPrefix(backupEnv, "-100")
+		bID, pErr := strconv.ParseInt(cleanID, 10, 64)
+		
+		if pErr == nil {
+			go func(backupID int64) {
+				// API ကို တိုက်ရိုက် ခိုင်းမယ်
+				_, bErr := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
+					DropAuthor: true,
+					RandomID:   []int64{rand.Int63()},
+					FromPeer:   u.EffectiveMessage.GetInputPeer(),
+					ID:         []int{u.EffectiveMessage.ID},
+					ToPeer:     &tg.InputPeerChannel{ChannelID: backupID},
+				})
+				if bErr != nil {
+					fmt.Printf("Backup Direct Error: %v\n", bErr)
+				}
+			}(bID)
+		}
 	}
-	// --- ဒီအထိပါ ---
-	if len(update.Updates) < 2 {
-		ctx.Reply(u, ext.ReplyTextString("Error - unexpected update structure from Telegram"), nil)
-		return dispatcher.EndGroups
-	}
-	msgIDUpdate, ok := update.Updates[0].(*tg.UpdateMessageID)
-	if !ok {
-		ctx.Reply(u, ext.ReplyTextString("Error - unexpected update type"), nil)
-		return dispatcher.EndGroups
-	}
-	messageID := msgIDUpdate.ID
-	newMsg, ok := update.Updates[1].(*tg.UpdateNewChannelMessage)
-	if !ok {
-		ctx.Reply(u, ext.ReplyTextString("Error - unexpected channel message update"), nil)
-		return dispatcher.EndGroups
-	}
-	msg, ok := newMsg.Message.(*tg.Message)
-	if !ok {
-		ctx.Reply(u, ext.ReplyTextString("Error - unexpected message type"), nil)
-		return dispatcher.EndGroups
-	}
-	doc := msg.Media
-	file, err := utils.FileFromMedia(doc)
-	if err != nil {
-		ctx.Reply(u, ext.ReplyTextString(fmt.Sprintf("Error - %s", err.Error())), nil)
-		return dispatcher.EndGroups
-	}
-	fullHash := utils.PackFile(
-		file.FileName,
-		file.FileSize,
-		file.MimeType,
-		file.ID,
-	)
-	hash := utils.GetShortHash(fullHash)
-	link := fmt.Sprintf("%s/stream/%d?hash=%s", config.ValueOf.Host, messageID, hash)
-	text := styling.Code(link)
-	row := tg.KeyboardButtonRow{
-		Buttons: []tg.KeyboardButtonClass{
-			&tg.KeyboardButtonURL{
-				Text: "Download",
-				URL:  link + "&d=true",
-			},
-		},
-	}
+	// ------------------------------------------
 	if strings.Contains(file.MimeType, "video") || strings.Contains(file.MimeType, "audio") || strings.Contains(file.MimeType, "pdf") {
 		row.Buttons = append(row.Buttons, &tg.KeyboardButtonURL{
 			Text: "Stream",
