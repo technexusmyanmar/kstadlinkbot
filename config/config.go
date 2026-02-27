@@ -42,7 +42,6 @@ type config struct {
 	ApiHash        string       `envconfig:"API_HASH" required:"true"`
 	BotToken       string       `envconfig:"BOT_TOKEN" required:"true"`
 	LogChannelID   int64        `envconfig:"LOG_CHANNEL" required:"true"`
-	BackupChannelID int64 		`envconfig:"BACKUP_CHANNEL"`
 	Dev            bool         `envconfig:"DEV" default:"false"`
 	Port           int          `envconfig:"PORT" default:"8080"`
 	Host           string       `envconfig:"HOST" default:""`
@@ -83,7 +82,6 @@ func SetFlagsFromConfig(cmd *cobra.Command) {
 	cmd.Flags().String("api-hash", ValueOf.ApiHash, "Telegram API Hash")
 	cmd.Flags().String("bot-token", ValueOf.BotToken, "Telegram Bot Token")
 	cmd.Flags().Int64("log-channel", ValueOf.LogChannelID, "Telegram Log Channel ID")
-	cmd.Flags().Int64("backup-channel", ValueOf.BackupChannelID, "Telegram Backup Channel ID")
 	cmd.Flags().Bool("dev", ValueOf.Dev, "Enable development mode")
 	cmd.Flags().IntP("port", "p", ValueOf.Port, "Server port")
 	cmd.Flags().String("host", ValueOf.Host, "Server host that will be included in links")
@@ -114,10 +112,6 @@ func (c *config) loadConfigFromArgs(log *zap.Logger, cmd *cobra.Command) {
 	logChannelID, _ := cmd.Flags().GetString("log-channel")
 	if logChannelID != "" {
 		os.Setenv("LOG_CHANNEL", logChannelID)
-	}
-	backupChannelID, _ := cmd.Flags().GetString("backup-channel")
-	if backupChannelID != "" {
-    os.Setenv("BACKUP_CHANNEL", backupChannelID)
 	}
 	dev, _ := cmd.Flags().GetBool("dev")
 	if dev {
@@ -209,9 +203,6 @@ func Load(log *zap.Logger, cmd *cobra.Command) {
 	defer log.Info("Loaded config")
 	ValueOf.setupEnvVars(log, cmd)
 	ValueOf.LogChannelID = int64(stripInt(log, int(ValueOf.LogChannelID)))
-	if ValueOf.BackupChannelID != 0 {
-    ValueOf.BackupChannelID = int64(stripInt(log, int(ValueOf.BackupChannelID)))
-}
 	if ValueOf.HashLength == 0 {
 		log.Sugar().Info("HASH_LENGTH can't be 0, defaulting to 6")
 		ValueOf.HashLength = 6
