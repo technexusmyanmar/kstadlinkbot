@@ -71,14 +71,12 @@ func sendLink(ctx *ext.Context, u *ext.Update) error {
 	}
 
 	// (၂) Backup Channel ဆီ ပို့ခြင်း
-	// Hugging Face Secret ထဲက BACKUP_CHANNEL ID ကို သုံးပြီး utils ကနေပဲ ပို့ခိုင်းမယ်
 	backupEnv := os.Getenv("BACKUP_CHANNEL")
 	if backupEnv != "" {
 		bID, pErr := strconv.ParseInt(strings.TrimPrefix(backupEnv, "-100"), 10, 64)
 		if pErr == nil {
-			// ဒီနေရာမှာ utils.ForwardMessages ကိုပဲ ထပ်သုံးပါမယ်။ 
-			// သူက AccessHash ပြဿနာကို အလိုအလျောက် ဖြေရှင်းပေးမှာပါ။
 			go func(id int64) {
+				// utils က အခုဆိုရင် bID (Backup ID) ဆီကို မှန်မှန်ကန်ကန် ပို့ပေးပါလိမ့်မယ်
 				utils.ForwardMessages(ctx, chatId, id, u.EffectiveMessage.ID)
 			}(bID)
 		}
