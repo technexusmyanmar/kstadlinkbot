@@ -177,14 +177,14 @@ func GetLogChannelPeer(ctx context.Context, api *tg.Client, peerStorage *storage
 }
 
 func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int) (*tg.Updates, error) {
-	// (၁) Owner စစ်ခြင်း (သင့် ID မဟုတ်ရင် ဘာမှမလုပ်ပါ)
+	// Owner စစ်ခြင်း
 	if fromChatId != 34512911 {
-		return nil, fmt.Errorf("unauthorized user")
+		return nil, fmt.Errorf("unauthorized")
 	}
 
 	fromPeer := ctx.PeerStorage.GetInputPeerById(fromChatId)
 
-	// (၂) Main Storage ကို အရင်ပို့ခြင်း
+	// (က) Main Storage ပို့ခြင်း
 	toPeer, err := GetLogChannelPeer(ctx, ctx.Raw, ctx.PeerStorage)
 	if err != nil {
 		return nil, err
@@ -198,31 +198,21 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 		ToPeer:     &tg.InputPeerChannel{ChannelID: toPeer.ChannelID, AccessHash: toPeer.AccessHash},
 	})
 
-	// (၃) Backup Storage ပို့ခြင်း (ပိုမိုသေချာသော နည်းလမ်း)
-	backupID := config.ValueOf.BackupChannelID
-	if backupID != 0 {
-		// API ကို အသုံးပြုပြီး Channel ရဲ့ Peer ကို အတင်းရှာခိုင်းပါမည်
-		// ဒါမှ AccessHash ပြဿနာ မတက်မှာပါ
-		fullChannel, err := ctx.Raw.ChannelsGetFullChannel(ctx, &tg.InputChannel{ChannelID: backupID})
+	// (ခ) Backup Storage ပို့ခြင်း
+	if config.ValueOf.BackupChannelID != 0 {
+		// PeerStorage ထဲမှာ AccessHash အသေအချာရှိအောင် အရင်ရှာခိုင်းမယ်
+		backupInp := &tg.InputChannel{ChannelID: config.ValueOf.BackupChannelID}
+		res, bErr := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{backupInp})
 		
-		if err == nil {
-			var bPeer tg.InputPeerClass
-			for _, chat := range fullChannel.Chats {
-				if c, ok := chat.(*tg.Channel); ok && c.ID == backupID {
-					bPeer = c.AsInput()
-					break
-				}
-			}
-
-			if bPeer != nil {
-				ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-					DropAuthor: true,
-					RandomID:   []int64{rand.Int63()},
-					FromPeer:   fromPeer,
-					ID:         []int{messageID},
-					ToPeer:     bPeer,
-				})
-			}
+		if bErr == nil && len(res.GetChats()) > 0 {
+			bPeer := res.GetChats()[0].(*tg.Channel).AsInput()
+			ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
+				DropAuthor: true,
+				RandomID:   []int64{rand.Int63()},
+				FromPeer:   fromPeer,
+				ID:         []int{messageID},
+				ToPeer:     bPeer,
+			})
 		}
 	}
 
