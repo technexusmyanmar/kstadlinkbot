@@ -208,14 +208,13 @@ func Load(log *zap.Logger, cmd *cobra.Command) {
 	log = log.Named("Config")
 	defer log.Info("Loaded config")
 	ValueOf.setupEnvVars(log, cmd)
-	// --- ဒီအပိုင်းမှာ အခုလို ပြောင်းလိုက်ပါ ---
 	ValueOf.LogChannelID = int64(stripInt(log, int(ValueOf.LogChannelID)))
+	ValueOf.BackupChannelID = int64(stripInt(log, int(ValueOf.BackupChannelID)))
 
-	if ValueOf.BackupChannelID != 0 {
-		ValueOf.BackupChannelID = int64(stripInt(log, int(ValueOf.BackupChannelID)))
+	if ValueOf.HashLength == 0 {
+		log.Sugar().Info("HASH_LENGTH can't be 0, defaulting to 6")
+		ValueOf.HashLength = 6
 	}
-	// ------------------------------------
-
 	if ValueOf.HashLength == 0 {
 		log.Sugar().Info("HASH_LENGTH can't be 0, defaulting to 6")
 		ValueOf.HashLength = 6
