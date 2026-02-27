@@ -183,11 +183,8 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 	}
 
 	fromPeer := ctx.PeerStorage.GetInputPeerById(fromChatId)
-	if fromPeer.Zero() {
-		return nil, fmt.Errorf("fromChatId: %d is not a valid peer", fromChatId)
-	}
 
-	// (၂) ပထမ Main Storage (LOG_CHANNEL) ကို ပို့ခြင်း
+	// (၂) Main Storage ကို အရင်ပို့ခြင်း
 	toPeer, err := GetLogChannelPeer(ctx, ctx.Raw, ctx.PeerStorage)
 	if err != nil {
 		return nil, err
@@ -201,35 +198,33 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 		ToPeer:     &tg.InputPeerChannel{ChannelID: toPeer.ChannelID, AccessHash: toPeer.AccessHash},
 	})
 
-	// (၃) ဒုတိယ Backup Storage (Hugging Face က BACKUP_CHANNEL ကို သုံးခြင်း)
+	// (၃) Backup Storage ပို့ခြင်း (ပိုမိုသေချာသော နည်းလမ်း)
 	backupID := config.ValueOf.BackupChannelID
 	if backupID != 0 {
-		// PeerStorage ထဲမှာ အချက်အလက်ရှိမရှိ စစ်သည်
-		backupPeer := ctx.PeerStorage.GetInputPeerById(backupID)
+		// API ကို အသုံးပြုပြီး Channel ရဲ့ Peer ကို အတင်းရှာခိုင်းပါမည်
+		// ဒါမှ AccessHash ပြဿနာ မတက်မှာပါ
+		fullChannel, err := ctx.Raw.ChannelsGetFullChannel(ctx, &tg.InputChannel{ChannelID: backupID})
 		
-		// သိမ်းထားတာမရှိရင် Telegram API ဆီကနေ Access Hash ကို အတင်းလှမ်းတောင်းသည်
-		if backupPeer.Zero() {
-			inputChannel := &tg.InputChannel{ChannelID: backupID}
-			channels, _ := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{inputChannel})
-			if len(channels.GetChats()) > 0 {
-				backupPeer = channels.GetChats()[0].(*tg.Channel).AsInput()
+		if err == nil {
+			var bPeer tg.InputPeerClass
+			for _, chat := range fullChannel.Chats {
+				if c, ok := chat.(*tg.Channel); ok && c.ID == backupID {
+					bPeer = c.AsInput()
+					break
+				}
+			}
+
+			if bPeer != nil {
+				ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
+					DropAuthor: true,
+					RandomID:   []int64{rand.Int63()},
+					FromPeer:   fromPeer,
+					ID:         []int{messageID},
+					ToPeer:     bPeer,
+				})
 			}
 		}
-
-		// Bot က Backup Channel ထဲမှာ Admin ဖြစ်နေရင် ဖိုင်ပို့ပေးမည်
-		if !backupPeer.Zero() {
-			ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-				DropAuthor: true,
-				RandomID:   []int64{rand.Int63()},
-				FromPeer:   fromPeer,
-				ID:         []int{messageID},
-				ToPeer:     backupPeer,
-			})
-		}
 	}
 
-	if err != nil {
-		return nil, err
-	}
-	return mainUpdate.(*tg.Updates), nil
+	return mainUpdate.(*tg.Updates), err
 }
