@@ -1,10 +1,12 @@
 package commands
 
 import (
+	import (
 	"fmt"
 	"strings"
-	"os"      // <--- ဒါလေး ထည့်ပါ
-	"strconv"
+	"os"      // ထည့်ရန်
+	"strconv" // ထည့်ရန်
+	"math/rand" // ထည့်ရန်
 	"EverythingSuckz/fsb/config"
 	"EverythingSuckz/fsb/internal/utils"
 
@@ -59,7 +61,6 @@ func sendLink(ctx *ext.Context, u *ext.Update) error {
 		ctx.Reply(u, ext.ReplyTextString("Sorry, this message type is unsupported."), nil)
 		return dispatcher.EndGroups
 	}
-	// (၁) မူရင်းအတိုင်း Log Channel ဆီ အရင်ပို့မယ် (Link ထုတ်ဖို့အတွက်)
 	update, err := utils.ForwardMessages(ctx, chatId, config.ValueOf.LogChannelID, u.EffectiveMessage.ID)
 	if err != nil {
 		utils.Logger.Sugar().Error(err)
@@ -67,17 +68,22 @@ func sendLink(ctx *ext.Context, u *ext.Update) error {
 		return dispatcher.EndGroups
 	}
 
-	// (၂) Backup Channel ရှိရင် ထပ်ပို့မယ် (ဒါပေမဲ့ Link အတွက် အနှောင့်အယှက် မဖြစ်စေရဘူး)
-	backupEnv := os.Getenv("BACKUP_CHANNEL")
-	if backupEnv != "" {
-		cleanBID, pErr := strconv.ParseInt(strings.TrimPrefix(backupEnv, "-100"), 10, 64)
-		if pErr == nil {
-			// Link ထုတ်တာ ကြန့်ကြာမသွားအောင် go routine (နောက်ကွယ်ကနေ ပို့ခိုင်းတာ) သုံးထားပါတယ်
-			go func() {
-				utils.ForwardMessages(ctx, chatId, cleanBID, u.EffectiveMessage.ID)
-			}()
-		}
+	// --- ဒီနေရာကနေ စထည့်ပါ ---
+	if config.ValueOf.BackupChannelID != 0 {
+		go func() {
+			_, bErr := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
+				DropAuthor: true,
+				RandomID:   []int64{rand.Int63()},
+				FromPeer:   u.EffectiveMessage.GetInputPeer(),
+				ID:         []int{u.EffectiveMessage.ID},
+				ToPeer:     &tg.InputPeerChannel{ChannelID: config.ValueOf.BackupChannelID},
+			})
+			if bErr != nil {
+				utils.Logger.Sugar().Errorf("Backup Error: %v", bErr)
+			}
+		}()
 	}
+	// --- ဒီအထိပါ ---
 	if len(update.Updates) < 2 {
 		ctx.Reply(u, ext.ReplyTextString("Error - unexpected update structure from Telegram"), nil)
 		return dispatcher.EndGroups
