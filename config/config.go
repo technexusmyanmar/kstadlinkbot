@@ -42,7 +42,7 @@ type config struct {
 	ApiHash        string       `envconfig:"API_HASH" required:"true"`
 	BotToken       string       `envconfig:"BOT_TOKEN" required:"true"`
 	LogChannelID   int64        `envconfig:"LOG_CHANNEL" required:"true"`
-	BackupChannelID int64        `envconfig:"BACKUP_CHANNEL" required:"true"`
+	BackupChannelID int64        `envconfig:"BACKUP_CHANNEL"`
 	Dev            bool         `envconfig:"DEV" default:"false"`
 	Port           int          `envconfig:"PORT" default:"8080"`
 	Host           string       `envconfig:"HOST" default:""`
