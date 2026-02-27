@@ -17,8 +17,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// ... (Contains နဲ့ IsClientDisconnectError function များ မူရင်းအတိုင်း ထားပါ) ...
-
+// https://stackoverflow.com/a/70802740/15807350
 func Contains[T comparable](s []T, e T) bool {
 	for _, v := range s {
 		if v == e {
@@ -28,6 +27,7 @@ func Contains[T comparable](s []T, e T) bool {
 	return false
 }
 
+// IsClientDisconnectError checks if the error is due to client disconnecting
 func IsClientDisconnectError(err error) bool {
 	if err == nil {
 		return false
@@ -116,8 +116,10 @@ func FileFromMessage(ctx context.Context, client *gotgproto.Client, messageID in
 	var cachedMedia types.File
 	err := cache.GetCache().Get(key, &cachedMedia)
 	if err == nil {
+		log.Debug("Using cached media message properties", zap.Int("messageID", messageID), zap.Int64("clientID", client.Self.ID))
 		return &cachedMedia, nil
 	}
+	log.Debug("Fetching file properties from message ID", zap.Int("messageID", messageID), zap.Int64("clientID", client.Self.ID))
 	message, err := GetTGMessage(ctx, client, messageID)
 	if err != nil {
 		return nil, err
@@ -133,59 +135,49 @@ func FileFromMessage(ctx context.Context, client *gotgproto.Client, messageID in
 	return file, nil
 }
 
-// မူရင်း GetLogChannelPeer
 func GetLogChannelPeer(ctx context.Context, api *tg.Client, peerStorage *storage.PeerStorage) (*tg.InputChannel, error) {
 	cachedInputPeer := peerStorage.GetInputPeerById(config.ValueOf.LogChannelID)
-	switch peer := cachedInputPeer.(type) {
-	case *tg.InputPeerChannel:
-		return &tg.InputChannel{ChannelID: peer.ChannelID, AccessHash: peer.AccessHash}, nil
-	}
-	inputChannel := &tg.InputChannel{ChannelID: config.ValueOf.LogChannelID}
-	channels, err := api.ChannelsGetChannels(ctx, []tg.InputChannelClass{inputChannel})
-	if err != nil {
-		return nil, err
-	}
-	channel := channels.GetChats()[0].(*tg.Channel)
-	peerStorage.AddPeer(channel.GetID(), channel.AccessHash, storage.TypeChannel, "")
-	return channel.AsInput(), nil
-}
 
-// Backup အတွက် အသစ်ထည့်ထားသော Function
-func GetBackupChannelPeer(ctx context.Context, api *tg.Client, peerStorage *storage.PeerStorage) (*tg.InputChannel, error) {
-	cachedInputPeer := peerStorage.GetInputPeerById(config.ValueOf.BackupChannelID)
 	switch peer := cachedInputPeer.(type) {
+	case *tg.InputPeerEmpty:
+		break
 	case *tg.InputPeerChannel:
-		return &tg.InputChannel{ChannelID: peer.ChannelID, AccessHash: peer.AccessHash}, nil
+		return &tg.InputChannel{
+			ChannelID:  peer.ChannelID,
+			AccessHash: peer.AccessHash,
+		}, nil
+	default:
+		return nil, errors.New("unexpected type of input peer")
 	}
-	inputChannel := &tg.InputChannel{ChannelID: config.ValueOf.BackupChannelID}
+	inputChannel := &tg.InputChannel{
+		ChannelID: config.ValueOf.LogChannelID,
+	}
 	channels, err := api.ChannelsGetChannels(ctx, []tg.InputChannelClass{inputChannel})
 	if err != nil {
 		return nil, err
 	}
-	channel := channels.GetChats()[0].(*tg.Channel)
+	if len(channels.GetChats()) == 0 {
+		return nil, errors.New("no channels found")
+	}
+	channel, ok := channels.GetChats()[0].(*tg.Channel)
+	if !ok {
+		return nil, errors.New("type assertion to *tg.Channel failed")
+	}
 	peerStorage.AddPeer(channel.GetID(), channel.AccessHash, storage.TypeChannel, "")
 	return channel.AsInput(), nil
 }
 
 func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int) (*tg.Updates, error) {
-	// (၁) Owner စစ်ဆေးခြင်း
-	if fromChatId != 34512911 {
-		return nil, fmt.Errorf("unauthorized")
-	}
-
 	fromPeer := ctx.PeerStorage.GetInputPeerById(fromChatId)
 	if fromPeer.Zero() {
-		return nil, fmt.Errorf("invalid fromPeer")
+		return nil, fmt.Errorf("fromChatId: %d is not a valid peer", fromChatId)
 	}
-
-	// (၂) Main Storage (Log Channel) ကို ပို့ခြင်း
 	toPeer, err := GetLogChannelPeer(ctx, ctx.Raw, ctx.PeerStorage)
 	if err != nil {
 		return nil, err
 	}
-	
-	mainUpdate, err := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-		DropAuthor: true,
+	update, err := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
+		DropAuthor: true, // ဤစာကြောင်းကို ထပ်တိုးပြီး Forward From ဖျောက်ထားပါသည်
 		RandomID:   []int64{rand.Int63()},
 		FromPeer:   fromPeer,
 		ID:         []int{messageID},
@@ -194,33 +186,5 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 	if err != nil {
 		return nil, err
 	}
-
-	// (၃) Backup Storage အတွက် အပိုင်း
-	// config.ValueOf.BackupChannelID က 0 ဖြစ်နေရင်တောင် Environment ကနေ အတင်းဖတ်မယ်
-	backupID := config.ValueOf.BackupChannelID
-	
-	if backupID != 0 {
-		// API ကနေ Channel အချက်အလက်ကို အတင်းတောင်းမယ်
-		backupInp := &tg.InputChannel{ChannelID: backupID}
-		res, bErr := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{backupInp})
-		
-		if bErr == nil && len(res.GetChats()) > 0 {
-			if bChat, ok := res.GetChats()[0].(*tg.Channel); ok {
-				// Backup ထဲကို Forward လုပ်မယ်
-				ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-					DropAuthor: true,
-					RandomID:   []int64{rand.Int63()},
-					FromPeer:   fromPeer,
-					ID:         []int{messageID},
-					ToPeer:     bChat.AsInput(),
-				})
-			}
-		}
-	}
-
-	return mainUpdate.(*tg.Updates), nil
-}
-	}
-
-	return mainUpdate.(*tg.Updates), nil
+	return update.(*tg.Updates), nil
 }
