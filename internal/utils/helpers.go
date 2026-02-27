@@ -168,16 +168,13 @@ func GetLogChannelPeer(ctx context.Context, api *tg.Client, peerStorage *storage
 }
 func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int) (*tg.Updates, error) {
 	fromPeer := ctx.PeerStorage.GetInputPeerById(fromChatId)
-	if fromPeer.Zero() {
-		return nil, fmt.Errorf("fromChatId: %d is not a valid peer", fromChatId)
-	}
-
-	// (၁) Log Channel (Main Storage) ဆီ ပို့ခြင်း
+	
+	// (၁) Main Log ဆီ ပို့ခြင်း
 	toPeer, err := GetLogChannelPeer(ctx, ctx.Raw, ctx.PeerStorage)
 	if err != nil {
 		return nil, err
 	}
-	update, err := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
+	mainUpdate, err := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
 		DropAuthor: true,
 		RandomID:   []int64{rand.Int63()},
 		FromPeer:   fromPeer,
@@ -188,19 +185,24 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 		return nil, err
 	}
 
-	// (၂) Backup Channel ဆီ ပို့ခြင်း (ID ကို တိုက်ရိုက်ဖတ်ပြီး API ကနေ ရှာခိုင်းမယ်)
+	// (၂) DEBUG အပိုင်း (Logs ထဲမှာ အဖြေရှာဖို့)
 	backupEnv := os.Getenv("BACKUP_CHANNEL")
+	fmt.Printf("--- BACKUP DEBUG START ---\n")
+	fmt.Printf("Backup Secret: %s\n", backupEnv)
+
 	if backupEnv != "" {
 		cleanID := strings.TrimPrefix(backupEnv, "-100")
 		bID, _ := strconv.ParseInt(cleanID, 10, 64)
+		fmt.Printf("Cleaned ID: %d\n", bID)
 
-		// API ကိုသုံးပြီး Backup Channel ရဲ့ အချက်အလက် (AccessHash) ကို အရင်တောင်းမယ်
 		inputChannel := &tg.InputChannel{ChannelID: bID}
 		res, bErr := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{inputChannel})
 		
-		if bErr == nil && len(res.GetChats()) > 0 {
+		if bErr != nil {
+			fmt.Printf("API Error: %v\n", bErr)
+		} else if len(res.GetChats()) > 0 {
 			if channel, ok := res.GetChats()[0].(*tg.Channel); ok {
-				// AccessHash ရပြီဆိုမှ Forward လုပ်မယ်
+				fmt.Println("Success: Found backup channel, sending file...")
 				ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
 					DropAuthor: true,
 					RandomID:   []int64{rand.Int63()},
@@ -210,7 +212,10 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 				})
 			}
 		}
+	} else {
+		fmt.Println("Error: BACKUP_CHANNEL Secret is empty!")
 	}
+	fmt.Printf("--- BACKUP DEBUG END ---\n")
 
-	return update.(*tg.Updates), nil
+	return mainUpdate.(*tg.Updates), nil
 }
