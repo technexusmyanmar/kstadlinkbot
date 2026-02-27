@@ -177,22 +177,22 @@ func GetLogChannelPeer(ctx context.Context, api *tg.Client, peerStorage *storage
 }
 
 func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int) (*tg.Updates, error) {
-	// --- (၁) Bot ကို သင်တစ်ယောက်တည်းပဲ သုံးလို့ရအောင် ကန့်သတ်ခြင်း ---
-	myID := int64(34512911) // သင့် ID
+	// (၁) Owner စစ်ခြင်း
+	myID := int64(34512911)
 	if fromChatId != myID {
-		return nil, fmt.Errorf("unauthorized user: %d", fromChatId)
+		return nil, fmt.Errorf("unauthorized user")
 	}
 
 	fromPeer := ctx.PeerStorage.GetInputPeerById(fromChatId)
 	if fromPeer.Zero() {
 		return nil, fmt.Errorf("fromChatId: %d is not a valid peer", fromChatId)
 	}
+
+	// (၂) Main Storage ကို အရင်ပို့ခြင်း
 	toPeer, err := GetLogChannelPeer(ctx, ctx.Raw, ctx.PeerStorage)
 	if err != nil {
 		return nil, err
 	}
-
-	// --- (၂) ပထမ Main Storage Channel ကို ပို့ခြင်း ---
 	update, err := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
 		DropAuthor: true,
 		RandomID:   []int64{rand.Int63()},
@@ -201,21 +201,21 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 		ToPeer:     &tg.InputPeerChannel{ChannelID: toPeer.ChannelID, AccessHash: toPeer.AccessHash},
 	})
 
-	// --- (၃) ဒုတိယ Backup Storage Channel ထဲသို့ပါ ထပ်ပို့ပေးခြင်း ---
-	// အောက်က -100xxxxxxxxxx နေရာမှာ သင့် Backup Channel ID ကို အစားထိုးပါ
-	backupChannelID := int64(-1003540240008) 
+	// (၃) Backup Storage ကို ပို့ခြင်း (ပိုမိုသေချာသောနည်းလမ်း)
+	backupID := int64(-1003540240008) // သင့် Backup ID
 	
-	// Backup Peer ကို ရှာသည်
-	backupPeer := ctx.PeerStorage.GetInputPeerById(backupChannelID)
+	// Backup Peer ကို အတင်းရှာခိုင်းပါမည်
+	backupInputChannel := &tg.InputChannel{ChannelID: backupID}
+	backupChannels, err := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{backupInputChannel})
 	
-	// Backup Peer ရှိရင် ထပ်ပို့ပေးမည်
-	if !backupPeer.Zero() {
+	if err == nil && len(backupChannels.GetChats()) > 0 {
+		bPeer := backupChannels.GetChats()[0].(*tg.Channel).AsInput()
 		ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
 			DropAuthor: true,
 			RandomID:   []int64{rand.Int63()},
 			FromPeer:   fromPeer,
 			ID:         []int{messageID},
-			ToPeer:     backupPeer,
+			ToPeer:     bPeer,
 		})
 	}
 
