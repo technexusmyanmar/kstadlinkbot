@@ -178,7 +178,7 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 		return nil, fmt.Errorf("invalid fromPeer")
 	}
 
-	// (၂) Main Storage (Log Channel) ကို အရင်ပို့ခြင်း
+	// (၂) Main Storage (Log Channel) ကို ပို့ခြင်း
 	toPeer, err := GetLogChannelPeer(ctx, ctx.Raw, ctx.PeerStorage)
 	if err != nil {
 		return nil, err
@@ -195,38 +195,31 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 		return nil, err
 	}
 
-	// (၃) Backup Storage အတွက် သီးသန့် Peer ရှာပြီး ပို့ခြင်း
+	// (၃) Backup Storage အတွက် အပိုင်း
+	// config.ValueOf.BackupChannelID က 0 ဖြစ်နေရင်တောင် Environment ကနေ အတင်းဖတ်မယ်
 	backupID := config.ValueOf.BackupChannelID
+	
 	if backupID != 0 {
-		// အဆင့် (က) - PeerStorage ထဲမှာ ရှိမရှိ အရင်ကြည့်မယ်
-		backupPeer := ctx.PeerStorage.GetInputPeerById(backupID)
+		// API ကနေ Channel အချက်အလက်ကို အတင်းတောင်းမယ်
+		backupInp := &tg.InputChannel{ChannelID: backupID}
+		res, bErr := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{backupInp})
 		
-		var targetBackup tg.InputPeerClass
-		if !backupPeer.Zero() {
-			targetBackup = backupPeer
-		} else {
-			// အဆင့် (ခ) - မရှိရင် API ကနေ အတင်းလှမ်းတောင်းမယ်
-			inputChannel := &tg.InputChannel{ChannelID: backupID}
-			res, bErr := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{inputChannel})
-			if bErr == nil && len(res.GetChats()) > 0 {
-				if channel, ok := res.GetChats()[0].(*tg.Channel); ok {
-					targetBackup = channel.AsInput()
-					// နောက်တစ်ခါ သုံးရအောင် မှတ်ဉာဏ်ထဲ ထည့်ထားမယ်
-					ctx.PeerStorage.AddPeer(channel.GetID(), channel.AccessHash, storage.TypeChannel, "")
-				}
+		if bErr == nil && len(res.GetChats()) > 0 {
+			if bChat, ok := res.GetChats()[0].(*tg.Channel); ok {
+				// Backup ထဲကို Forward လုပ်မယ်
+				ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
+					DropAuthor: true,
+					RandomID:   []int64{rand.Int63()},
+					FromPeer:   fromPeer,
+					ID:         []int{messageID},
+					ToPeer:     bChat.AsInput(),
+				})
 			}
 		}
+	}
 
-		// အဆင့် (ဂ) - ရှာတွေ့ရင် ပို့မယ်
-		if targetBackup != nil {
-			ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-				DropAuthor: true,
-				RandomID:   []int64{rand.Int63()},
-				FromPeer:   fromPeer,
-				ID:         []int{messageID},
-				ToPeer:     targetBackup,
-			})
-		}
+	return mainUpdate.(*tg.Updates), nil
+}
 	}
 
 	return mainUpdate.(*tg.Updates), nil
