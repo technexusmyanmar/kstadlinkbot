@@ -3,7 +3,8 @@ package commands
 import (
 	"fmt"
 	"strings"
-
+	"os"      // <--- ဒါလေး ထည့်ပါ
+	"strconv"
 	"EverythingSuckz/fsb/config"
 	"EverythingSuckz/fsb/internal/utils"
 
@@ -58,11 +59,24 @@ func sendLink(ctx *ext.Context, u *ext.Update) error {
 		ctx.Reply(u, ext.ReplyTextString("Sorry, this message type is unsupported."), nil)
 		return dispatcher.EndGroups
 	}
+	// (၁) မူရင်းအတိုင်း Log Channel ဆီ အရင်ပို့မယ် (Link ထုတ်ဖို့အတွက်)
 	update, err := utils.ForwardMessages(ctx, chatId, config.ValueOf.LogChannelID, u.EffectiveMessage.ID)
 	if err != nil {
 		utils.Logger.Sugar().Error(err)
 		ctx.Reply(u, ext.ReplyTextString(fmt.Sprintf("Error - %s", err.Error())), nil)
 		return dispatcher.EndGroups
+	}
+
+	// (၂) Backup Channel ရှိရင် ထပ်ပို့မယ် (ဒါပေမဲ့ Link အတွက် အနှောင့်အယှက် မဖြစ်စေရဘူး)
+	backupEnv := os.Getenv("BACKUP_CHANNEL")
+	if backupEnv != "" {
+		cleanBID, pErr := strconv.ParseInt(strings.TrimPrefix(backupEnv, "-100"), 10, 64)
+		if pErr == nil {
+			// Link ထုတ်တာ ကြန့်ကြာမသွားအောင် go routine (နောက်ကွယ်ကနေ ပို့ခိုင်းတာ) သုံးထားပါတယ်
+			go func() {
+				utils.ForwardMessages(ctx, chatId, cleanBID, u.EffectiveMessage.ID)
+			}()
+		}
 	}
 	if len(update.Updates) < 2 {
 		ctx.Reply(u, ext.ReplyTextString("Error - unexpected update structure from Telegram"), nil)
