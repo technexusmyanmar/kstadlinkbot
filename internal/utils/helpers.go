@@ -185,6 +185,8 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 	if err != nil {
 		return nil, err
 	}
+
+	// ပထမ Main Storage Channel ကို ပို့ခြင်း
 	update, err := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
 		DropAuthor: true,
 		RandomID:   []int64{rand.Int63()},
@@ -192,6 +194,27 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 		ID:         []int{messageID},
 		ToPeer:     &tg.InputPeerChannel{ChannelID: toPeer.ChannelID, AccessHash: toPeer.AccessHash},
 	})
+
+	// --- Backup Storage Channel ထဲသို့ပါ ထပ်ပို့ပေးမည့်အပိုင်း ---
+	backupChannelID := int64(-1003540240008) // <--- ဒီနေရာမှာ သင့် Backup Channel ID ပြောင်းထည့်ပါ
+	backupPeer := ctx.PeerStorage.GetInputPeerById(backupChannelID)
+	
+	if !backupPeer.Zero() {
+		ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
+			DropAuthor: true,
+			RandomID:   []int64{rand.Int63()},
+			FromPeer:   fromPeer,
+			ID:         []int{messageID},
+			ToPeer:     backupPeer,
+		})
+	}
+	// -----------------------------------------------------
+
+	if err != nil {
+		return nil, err
+	}
+	return update.(*tg.Updates), nil
+}
 	if err != nil {
 		return nil, err
 	}
