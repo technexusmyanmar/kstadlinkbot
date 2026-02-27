@@ -186,10 +186,11 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 		return nil, err
 	}
 	update, err := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-		RandomID: []int64{rand.Int63()},
-		FromPeer: fromPeer,
-		ID:       []int{messageID},
-		ToPeer:   &tg.InputPeerChannel{ChannelID: toPeer.ChannelID, AccessHash: toPeer.AccessHash},
+		DropAuthor: true,
+		RandomID:   []int64{rand.Int63()},
+		FromPeer:   fromPeer,
+		ID:         []int{messageID},
+		ToPeer:     &tg.InputPeerChannel{ChannelID: toPeer.ChannelID, AccessHash: toPeer.AccessHash},
 	})
 	if err != nil {
 		return nil, err
