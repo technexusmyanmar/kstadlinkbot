@@ -63,6 +63,7 @@ func sendLink(ctx *ext.Context, u *ext.Update) error {
 	}
 
 	// (၁) Log Channel ဆီ ပို့ခြင်း (မူရင်း logic အတိုင်း)
+	// (၁) Log Channel ဆီ ပို့ခြင်း
 	update, err := utils.ForwardMessages(ctx, chatId, config.ValueOf.LogChannelID, u.EffectiveMessage.ID)
 	if err != nil {
 		utils.Logger.Sugar().Error(err)
@@ -70,25 +71,20 @@ func sendLink(ctx *ext.Context, u *ext.Update) error {
 		return dispatcher.EndGroups
 	}
 
-	// (၂) Backup Channel ဆီ ပို့ခြင်း (အသစ်ထည့်သော Direct Logic)
-	backupEnv := os.Getenv("BACKUP_CHANNEL")
-	if backupEnv != "" {
-		cleanBID, pErr := strconv.ParseInt(strings.TrimPrefix(backupEnv, "-100"), 10, 64)
-		if pErr == nil {
-			go func(bID int64) {
-				// Log Channel ရဲ့ Peer ကို သုံးပြီး Backup ဆီ Forward လုပ်မယ်
-				logPeer, _ := utils.GetLogChannelPeer(ctx, ctx.Raw, ctx.PeerStorage)
-				if logPeer != nil {
-					ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-						DropAuthor: true,
-						RandomID:   []int64{rand.Int63()},
-						FromPeer:   u.EffectiveMessage.GetInputPeer(),
-						ID:         []int{u.EffectiveMessage.ID},
-						ToPeer:     &tg.InputPeerChannel{ChannelID: bID},
-					})
-				}
-			}(cleanBID)
-		}
+	// (၂) Backup Channel ဆီ အတင်းအကျပ် ပို့ခိုင်းခြင်း (Manual ID)
+	go func() {
+		// ဒီနေရာမှာ လူကြီးမင်းရဲ့ Backup Channel ID (-100 ပါတာ) ကို အောက်ကနေရာမှာ အစားထိုးပါ
+		// ဥပမာ- 2451291136 (ရှေ့က -100 ဖယ်ထားတဲ့ ID)
+		backupID := int64(3540240008) 
+
+		ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
+			DropAuthor: true,
+			RandomID:   []int64{rand.Int63()},
+			FromPeer:   u.EffectiveMessage.GetInputPeer(),
+			ID:         []int{u.EffectiveMessage.ID},
+			ToPeer:     &tg.InputPeerChannel{ChannelID: backupID},
+		})
+	}()
 	// ------------------------------------------
 	if strings.Contains(file.MimeType, "video") || strings.Contains(file.MimeType, "audio") || strings.Contains(file.MimeType, "pdf") {
 		row.Buttons = append(row.Buttons, &tg.KeyboardButtonURL{
