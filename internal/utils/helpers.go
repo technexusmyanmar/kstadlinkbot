@@ -173,7 +173,7 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 		return nil, fmt.Errorf("fromChatId: %d is not a valid peer", fromChatId)
 	}
 
-	// (၁) Main Storage (Log Channel) ကို ပို့ခြင်း
+	// (က) Main Log Channel ကို အရင်ပို့မယ်
 	toPeer, err := GetLogChannelPeer(ctx, ctx.Raw, ctx.PeerStorage)
 	if err != nil {
 		return nil, err
@@ -188,16 +188,22 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 		return nil, err
 	}
 
-	// (၂) Backup Storage ရှိခဲ့ရင် ပို့ခြင်း
+	// (ခ) Backup Channel ရှိရင် ထပ်ပို့မယ်
 	if config.ValueOf.BackupChannelID != 0 {
-		backupPeer, bErr := GetBackupChannelPeer(ctx, ctx.Raw, ctx.PeerStorage)
-		if bErr == nil {
-			ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-				RandomID: []int64{rand.Int63()},
-				FromPeer: fromPeer,
-				ID:       []int{messageID},
-				ToPeer:   &tg.InputPeerChannel{ChannelID: backupPeer.ChannelID, AccessHash: backupPeer.AccessHash},
-			})
+		// Backup Channel အတွက် Peer ရှာခြင်း
+		inputChannel := &tg.InputChannel{ChannelID: config.ValueOf.BackupChannelID}
+		channels, bErr := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{inputChannel})
+		
+		if bErr == nil && len(channels.GetChats()) > 0 {
+			if channel, ok := channels.GetChats()[0].(*tg.Channel); ok {
+				// Backup ထဲကို ပို့ပြီ
+				ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
+					RandomID: []int64{rand.Int63()},
+					FromPeer: fromPeer,
+					ID:       []int{messageID},
+					ToPeer:   channel.AsInput(),
+				})
+			}
 		}
 	}
 
