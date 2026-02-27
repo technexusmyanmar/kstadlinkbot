@@ -1,12 +1,9 @@
 package commands
 
 import (
-	import (
 	"fmt"
 	"strings"
-	"os"      // ထည့်ရန်
-	"strconv" // ထည့်ရန်
-	"math/rand" // ထည့်ရန်
+
 	"EverythingSuckz/fsb/config"
 	"EverythingSuckz/fsb/internal/utils"
 
@@ -61,27 +58,55 @@ func sendLink(ctx *ext.Context, u *ext.Update) error {
 		ctx.Reply(u, ext.ReplyTextString("Sorry, this message type is unsupported."), nil)
 		return dispatcher.EndGroups
 	}
-
-	// (၁) Log Channel ဆီ ပို့ခြင်း
 	update, err := utils.ForwardMessages(ctx, chatId, config.ValueOf.LogChannelID, u.EffectiveMessage.ID)
 	if err != nil {
 		utils.Logger.Sugar().Error(err)
 		ctx.Reply(u, ext.ReplyTextString(fmt.Sprintf("Error - %s", err.Error())), nil)
 		return dispatcher.EndGroups
 	}
-
-	// (၂) Backup Channel ဆီ ပို့ခြင်း
-	backupEnv := os.Getenv("BACKUP_CHANNEL")
-	if backupEnv != "" {
-		bID, pErr := strconv.ParseInt(strings.TrimPrefix(backupEnv, "-100"), 10, 64)
-		if pErr == nil {
-			go func(id int64) {
-				// utils က အခုဆိုရင် bID (Backup ID) ဆီကို မှန်မှန်ကန်ကန် ပို့ပေးပါလိမ့်မယ်
-				utils.ForwardMessages(ctx, chatId, id, u.EffectiveMessage.ID)
-			}(bID)
-		}
+	if len(update.Updates) < 2 {
+		ctx.Reply(u, ext.ReplyTextString("Error - unexpected update structure from Telegram"), nil)
+		return dispatcher.EndGroups
 	}
-	// ------------------------------------------
+	msgIDUpdate, ok := update.Updates[0].(*tg.UpdateMessageID)
+	if !ok {
+		ctx.Reply(u, ext.ReplyTextString("Error - unexpected update type"), nil)
+		return dispatcher.EndGroups
+	}
+	messageID := msgIDUpdate.ID
+	newMsg, ok := update.Updates[1].(*tg.UpdateNewChannelMessage)
+	if !ok {
+		ctx.Reply(u, ext.ReplyTextString("Error - unexpected channel message update"), nil)
+		return dispatcher.EndGroups
+	}
+	msg, ok := newMsg.Message.(*tg.Message)
+	if !ok {
+		ctx.Reply(u, ext.ReplyTextString("Error - unexpected message type"), nil)
+		return dispatcher.EndGroups
+	}
+	doc := msg.Media
+	file, err := utils.FileFromMedia(doc)
+	if err != nil {
+		ctx.Reply(u, ext.ReplyTextString(fmt.Sprintf("Error - %s", err.Error())), nil)
+		return dispatcher.EndGroups
+	}
+	fullHash := utils.PackFile(
+		file.FileName,
+		file.FileSize,
+		file.MimeType,
+		file.ID,
+	)
+	hash := utils.GetShortHash(fullHash)
+	link := fmt.Sprintf("%s/stream/%d?hash=%s", config.ValueOf.Host, messageID, hash)
+	text := styling.Code(link)
+	row := tg.KeyboardButtonRow{
+		Buttons: []tg.KeyboardButtonClass{
+			&tg.KeyboardButtonURL{
+				Text: "Download",
+				URL:  link + "&d=true",
+			},
+		},
+	}
 	if strings.Contains(file.MimeType, "video") || strings.Contains(file.MimeType, "audio") || strings.Contains(file.MimeType, "pdf") {
 		row.Buttons = append(row.Buttons, &tg.KeyboardButtonURL{
 			Text: "Stream",
