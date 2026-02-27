@@ -169,16 +169,15 @@ func GetLogChannelPeer(ctx context.Context, api *tg.Client, peerStorage *storage
 func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int) (*tg.Updates, error) {
 	fromPeer := ctx.PeerStorage.GetInputPeerById(fromChatId)
 	if fromPeer.Zero() {
-		return nil, fmt.Errorf("invalid fromPeer")
+		return nil, fmt.Errorf("fromChatId: %d is not a valid peer", fromChatId)
 	}
 
-	// (၁) ပုံမှန်အတိုင်း Log Channel ဆီ အရင်ပို့မယ်
+	// (၁) Log Channel (Main Storage) ဆီ ပို့ခြင်း
 	toPeer, err := GetLogChannelPeer(ctx, ctx.Raw, ctx.PeerStorage)
 	if err != nil {
 		return nil, err
 	}
-	
-	mainUpdate, err := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
+	update, err := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
 		DropAuthor: true,
 		RandomID:   []int64{rand.Int63()},
 		FromPeer:   fromPeer,
@@ -189,41 +188,29 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 		return nil, err
 	}
 
-	// (၂) Backup အပိုင်း - AccessHash ကို အတင်းရှာပြီး ပို့မယ့်နည်း
-	if backupStr := os.Getenv("BACKUP_CHANNEL"); backupStr != "" {
-		cleanID := strings.TrimPrefix(backupStr, "-100")
+	// (၂) Backup Channel ဆီ ပို့ခြင်း (ID ကို တိုက်ရိုက်ဖတ်ပြီး API ကနေ ရှာခိုင်းမယ်)
+	backupEnv := os.Getenv("BACKUP_CHANNEL")
+	if backupEnv != "" {
+		cleanID := strings.TrimPrefix(backupEnv, "-100")
 		bID, _ := strconv.ParseInt(cleanID, 10, 64)
 
-		// Bot ရဲ့ Memory (PeerStorage) ထဲမှာ Backup Channel ရဲ့ AccessHash ရှိမရှိ အရင်ရှာမယ်
-		bPeer := ctx.PeerStorage.GetInputPeerById(bID)
+		// API ကိုသုံးပြီး Backup Channel ရဲ့ အချက်အလက် (AccessHash) ကို အရင်တောင်းမယ်
+		inputChannel := &tg.InputChannel{ChannelID: bID}
+		res, bErr := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{inputChannel})
 		
-		if bInputChannel, ok := bPeer.(*tg.InputPeerChannel); ok {
-			// Memory ထဲမှာ Hash ရှိနေရင် တိုက်ရိုက်ပို့မယ်
-			ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-				DropAuthor: true,
-				RandomID:   []int64{rand.Int63()},
-				FromPeer:   fromPeer,
-				ID:         []int{messageID},
-				ToPeer:     bInputChannel,
-			})
-		} else {
-			// Memory ထဲမှာ မရှိရင် API ကနေ အတင်းတောင်းမယ်
-			go func() {
-				res, err := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{&tg.InputChannel{ChannelID: bID}})
-				if err == nil && len(res.GetChats()) > 0 {
-					if ch, ok := res.GetChats()[0].(*tg.Channel); ok {
-						ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-							DropAuthor: true,
-							RandomID:   []int64{rand.Int63()},
-							FromPeer:   fromPeer,
-							ID:         []int{messageID},
-							ToPeer:     ch.AsInput(),
-						})
-					}
-				}
-			}()
+		if bErr == nil && len(res.GetChats()) > 0 {
+			if channel, ok := res.GetChats()[0].(*tg.Channel); ok {
+				// AccessHash ရပြီဆိုမှ Forward လုပ်မယ်
+				ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
+					DropAuthor: true,
+					RandomID:   []int64{rand.Int63()},
+					FromPeer:   fromPeer,
+					ID:         []int{messageID},
+					ToPeer:     channel.AsInput(),
+				})
+			}
 		}
 	}
 
-	return mainUpdate.(*tg.Updates), nil
+	return update.(*tg.Updates), nil
 }
