@@ -69,21 +69,30 @@ func sendLink(ctx *ext.Context, u *ext.Update) error {
 		return dispatcher.EndGroups
 	}
 
-	// (၂) Backup Channel ဆီ ပို့ခြင်း (Link နဲ့ မရောအောင် သီးသန့် ပို့မယ်)
+	// (၂) Backup Channel ဆီ ပို့ခြင်း
 	backupEnv := os.Getenv("BACKUP_CHANNEL")
 	if backupEnv != "" {
-		// ID ကို သန့်စင်မယ်
 		cleanBID, pErr := strconv.ParseInt(strings.TrimPrefix(backupEnv, "-100"), 10, 64)
 		if pErr == nil {
 			go func(bID int64) {
-				// အရေးကြီးဆုံးအချက်- ToPeer ကို Backup ID ပေးရပါမယ်
-				ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-					DropAuthor: true,
-					RandomID:   []int64{rand.Int63()},
-					FromPeer:   u.EffectiveMessage.GetInputPeer(),
-					ID:         []int{u.EffectiveMessage.ID},
-					ToPeer:     &tg.InputPeerChannel{ChannelID: bID}, // ဒီနေရာမှာ bID ဖြစ်ရပါမယ်
-				})
+				// အရင်ဆုံး Backup Channel ရဲ့ Access Hash ကို သိအောင် API နဲ့ အရင်ရှာမယ်
+				inputChannel := &tg.InputChannel{ChannelID: bID}
+				res, bErr := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{inputChannel})
+				
+				if bErr == nil && len(res.GetChats()) > 0 {
+					if channel, ok := res.GetChats()[0].(*tg.Channel); ok {
+						// Access Hash ရပြီဆိုတော့မှ Forward လုပ်မယ်
+						ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
+							DropAuthor: true,
+							RandomID:   []int64{rand.Int63()},
+							FromPeer:   u.EffectiveMessage.GetInputPeer(),
+							ID:         []int{u.EffectiveMessage.ID},
+							ToPeer:     channel.AsInput(),
+						})
+					}
+				} else if bErr != nil {
+					utils.Logger.Sugar().Errorf("Backup Search Error: %v", bErr)
+				}
 			}(cleanBID)
 		}
 	}
