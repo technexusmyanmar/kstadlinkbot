@@ -177,35 +177,41 @@ func GetLogChannelPeer(ctx context.Context, api *tg.Client, peerStorage *storage
 }
 
 func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int) (*tg.Updates, error) {
-	// Owner စစ်ခြင်း
+	// (၁) Owner စစ်ခြင်း (သင့် ID မဟုတ်ရင် ဘာမှမလုပ်ပါ)
 	if fromChatId != 34512911 {
 		return nil, fmt.Errorf("unauthorized")
 	}
 
 	fromPeer := ctx.PeerStorage.GetInputPeerById(fromChatId)
 
-	// (က) Main Storage ပို့ခြင်း
-	toPeer, err := GetLogChannelPeer(ctx, ctx.Raw, ctx.PeerStorage)
-	if err != nil {
-		return nil, err
-	}
-	
-	mainUpdate, err := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-		DropAuthor: true,
-		RandomID:   []int64{rand.Int63()},
-		FromPeer:   fromPeer,
-		ID:         []int{messageID},
-		ToPeer:     &tg.InputPeerChannel{ChannelID: toPeer.ChannelID, AccessHash: toPeer.AccessHash},
-	})
+	// (၂) Main Storage (Log Channel) ကို ပို့ခြင်း
+	// config.go ထဲမှာ stripInt လုပ်ထားပြီးသားမို့လို့ API ကနေ Access Hash လှမ်းတောင်းပါမယ်
+	mainInp := &tg.InputChannel{ChannelID: toChatId}
+	mRes, mErr := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{mainInp})
+	var mainUpdate *tg.Updates
 
-	// (ခ) Backup Storage ပို့ခြင်း
-	if config.ValueOf.BackupChannelID != 0 {
-		// PeerStorage ထဲမှာ AccessHash အသေအချာရှိအောင် အရင်ရှာခိုင်းမယ်
-		backupInp := &tg.InputChannel{ChannelID: config.ValueOf.BackupChannelID}
-		res, bErr := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{backupInp})
+	if mErr == nil && len(mRes.GetChats()) > 0 {
+		mPeer := mRes.GetChats()[0].(*tg.Channel).AsInput()
+		res, _ := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
+			DropAuthor: true,
+			RandomID:   []int64{rand.Int63()},
+			FromPeer:   fromPeer,
+			ID:         []int{messageID},
+			ToPeer:     mPeer,
+		})
+		if res != nil {
+			mainUpdate = res.(*tg.Updates)
+		}
+	}
+
+	// (၃) Backup Storage ကိုပါ ထပ်ပို့ပေးခြင်း
+	backupID := config.ValueOf.BackupChannelID
+	if backupID != 0 {
+		backupInp := &tg.InputChannel{ChannelID: backupID}
+		bRes, bErr := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{backupInp})
 		
-		if bErr == nil && len(res.GetChats()) > 0 {
-			bPeer := res.GetChats()[0].(*tg.Channel).AsInput()
+		if bErr == nil && len(bRes.GetChats()) > 0 {
+			bPeer := bRes.GetChats()[0].(*tg.Channel).AsInput()
 			ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
 				DropAuthor: true,
 				RandomID:   []int64{rand.Int63()},
@@ -216,5 +222,8 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 		}
 	}
 
-	return mainUpdate.(*tg.Updates), err
+	if mainUpdate == nil {
+		return nil, fmt.Errorf("failed to forward to main storage")
+	}
+	return mainUpdate, nil
 }
