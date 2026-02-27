@@ -61,7 +61,8 @@ func sendLink(ctx *ext.Context, u *ext.Update) error {
 		ctx.Reply(u, ext.ReplyTextString("Sorry, this message type is unsupported."), nil)
 		return dispatcher.EndGroups
 	}
-	// (၁) Log Channel ဆီ ပို့ခြင်း (Link ထုတ်ရန်အတွက်)
+
+	// (၁) Log Channel ဆီ ပို့ခြင်း (မူရင်း logic အတိုင်း)
 	update, err := utils.ForwardMessages(ctx, chatId, config.ValueOf.LogChannelID, u.EffectiveMessage.ID)
 	if err != nil {
 		utils.Logger.Sugar().Error(err)
@@ -69,33 +70,25 @@ func sendLink(ctx *ext.Context, u *ext.Update) error {
 		return dispatcher.EndGroups
 	}
 
-	// (၂) Backup Channel ဆီ ပို့ခြင်း
+	// (၂) Backup Channel ဆီ ပို့ခြင်း (အသစ်ထည့်သော Direct Logic)
 	backupEnv := os.Getenv("BACKUP_CHANNEL")
 	if backupEnv != "" {
 		cleanBID, pErr := strconv.ParseInt(strings.TrimPrefix(backupEnv, "-100"), 10, 64)
 		if pErr == nil {
 			go func(bID int64) {
-				// အရင်ဆုံး Backup Channel ရဲ့ Access Hash ကို သိအောင် API နဲ့ အရင်ရှာမယ်
-				inputChannel := &tg.InputChannel{ChannelID: bID}
-				res, bErr := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{inputChannel})
-				
-				if bErr == nil && len(res.GetChats()) > 0 {
-					if channel, ok := res.GetChats()[0].(*tg.Channel); ok {
-						// Access Hash ရပြီဆိုတော့မှ Forward လုပ်မယ်
-						ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-							DropAuthor: true,
-							RandomID:   []int64{rand.Int63()},
-							FromPeer:   u.EffectiveMessage.GetInputPeer(),
-							ID:         []int{u.EffectiveMessage.ID},
-							ToPeer:     channel.AsInput(),
-						})
-					}
-				} else if bErr != nil {
-					utils.Logger.Sugar().Errorf("Backup Search Error: %v", bErr)
+				// Log Channel ရဲ့ Peer ကို သုံးပြီး Backup ဆီ Forward လုပ်မယ်
+				logPeer, _ := utils.GetLogChannelPeer(ctx, ctx.Raw, ctx.PeerStorage)
+				if logPeer != nil {
+					ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
+						DropAuthor: true,
+						RandomID:   []int64{rand.Int63()},
+						FromPeer:   u.EffectiveMessage.GetInputPeer(),
+						ID:         []int{u.EffectiveMessage.ID},
+						ToPeer:     &tg.InputPeerChannel{ChannelID: bID},
+					})
 				}
 			}(cleanBID)
 		}
-	}
 	// ------------------------------------------
 	if strings.Contains(file.MimeType, "video") || strings.Contains(file.MimeType, "audio") || strings.Contains(file.MimeType, "pdf") {
 		row.Buttons = append(row.Buttons, &tg.KeyboardButtonURL{
