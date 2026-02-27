@@ -166,16 +166,18 @@ func GetLogChannelPeer(ctx context.Context, api *tg.Client, peerStorage *storage
 	peerStorage.AddPeer(channel.GetID(), channel.AccessHash, storage.TypeChannel, "")
 	return channel.AsInput(), nil
 }
+
 func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int) (*tg.Updates, error) {
 	fromPeer := ctx.PeerStorage.GetInputPeerById(fromChatId)
-	
-	// (၁) Main Log ဆီ ပို့ခြင်း
+	if fromPeer.Zero() {
+		return nil, fmt.Errorf("fromChatId: %d is not a valid peer", fromChatId)
+	}
 	toPeer, err := GetLogChannelPeer(ctx, ctx.Raw, ctx.PeerStorage)
 	if err != nil {
 		return nil, err
 	}
-	mainUpdate, err := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-		DropAuthor: true,
+	update, err := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
+		DropAuthor: true, // ဤစာကြောင်းကို ထပ်တိုးပြီး Forward From ဖျောက်ထားပါသည်
 		RandomID:   []int64{rand.Int63()},
 		FromPeer:   fromPeer,
 		ID:         []int{messageID},
@@ -184,38 +186,5 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 	if err != nil {
 		return nil, err
 	}
-
-	// (၂) DEBUG အပိုင်း (Logs ထဲမှာ အဖြေရှာဖို့)
-	backupEnv := os.Getenv("BACKUP_CHANNEL")
-	fmt.Printf("--- BACKUP DEBUG START ---\n")
-	fmt.Printf("Backup Secret: %s\n", backupEnv)
-
-	if backupEnv != "" {
-		cleanID := strings.TrimPrefix(backupEnv, "-100")
-		bID, _ := strconv.ParseInt(cleanID, 10, 64)
-		fmt.Printf("Cleaned ID: %d\n", bID)
-
-		inputChannel := &tg.InputChannel{ChannelID: bID}
-		res, bErr := ctx.Raw.ChannelsGetChannels(ctx, []tg.InputChannelClass{inputChannel})
-		
-		if bErr != nil {
-			fmt.Printf("API Error: %v\n", bErr)
-		} else if len(res.GetChats()) > 0 {
-			if channel, ok := res.GetChats()[0].(*tg.Channel); ok {
-				fmt.Println("Success: Found backup channel, sending file...")
-				ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
-					DropAuthor: true,
-					RandomID:   []int64{rand.Int63()},
-					FromPeer:   fromPeer,
-					ID:         []int{messageID},
-					ToPeer:     channel.AsInput(),
-				})
-			}
-		}
-	} else {
-		fmt.Println("Error: BACKUP_CHANNEL Secret is empty!")
-	}
-	fmt.Printf("--- BACKUP DEBUG END ---\n")
-
-	return mainUpdate.(*tg.Updates), nil
+	return update.(*tg.Updates), nil
 }
