@@ -177,6 +177,12 @@ func GetLogChannelPeer(ctx context.Context, api *tg.Client, peerStorage *storage
 }
 
 func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int) (*tg.Updates, error) {
+	// --- (၁) Bot ကို သင်တစ်ယောက်တည်းပဲ သုံးလို့ရအောင် ကန့်သတ်ခြင်း ---
+	myID := int64(34512911) // သင့် ID
+	if fromChatId != myID {
+		return nil, fmt.Errorf("unauthorized user: %d", fromChatId)
+	}
+
 	fromPeer := ctx.PeerStorage.GetInputPeerById(fromChatId)
 	if fromPeer.Zero() {
 		return nil, fmt.Errorf("fromChatId: %d is not a valid peer", fromChatId)
@@ -186,7 +192,7 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 		return nil, err
 	}
 
-	// ပထမ Main Storage Channel ကို ပို့ခြင်း
+	// --- (၂) ပထမ Main Storage Channel ကို ပို့ခြင်း ---
 	update, err := ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
 		DropAuthor: true,
 		RandomID:   []int64{rand.Int63()},
@@ -195,10 +201,14 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 		ToPeer:     &tg.InputPeerChannel{ChannelID: toPeer.ChannelID, AccessHash: toPeer.AccessHash},
 	})
 
-	// --- Backup Storage Channel ထဲသို့ပါ ထပ်ပို့ပေးမည့်အပိုင်း ---
-	backupChannelID := int64(-1003540240008) // <--- ဒီနေရာမှာ သင့် Backup Channel ID ပြောင်းထည့်ပါ
+	// --- (၃) ဒုတိယ Backup Storage Channel ထဲသို့ပါ ထပ်ပို့ပေးခြင်း ---
+	// အောက်က -100xxxxxxxxxx နေရာမှာ သင့် Backup Channel ID ကို အစားထိုးပါ
+	backupChannelID := int64(-1003540240008) 
+	
+	// Backup Peer ကို ရှာသည်
 	backupPeer := ctx.PeerStorage.GetInputPeerById(backupChannelID)
 	
+	// Backup Peer ရှိရင် ထပ်ပို့ပေးမည်
 	if !backupPeer.Zero() {
 		ctx.Raw.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{
 			DropAuthor: true,
@@ -208,13 +218,7 @@ func ForwardMessages(ctx *ext.Context, fromChatId, toChatId int64, messageID int
 			ToPeer:     backupPeer,
 		})
 	}
-	// -----------------------------------------------------
 
-	if err != nil {
-		return nil, err
-	}
-	return update.(*tg.Updates), nil
-}
 	if err != nil {
 		return nil, err
 	}
